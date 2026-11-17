@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from toy_sync.engine import Engine, Journal, pair, scan, validate
 
 
@@ -93,6 +93,45 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_sync()
         self.assertTrue((self.b / 'file').exists())
+
+    def test_open_database_identifies_holder_and_path(self):
+        for root, output, holder in (
+                (self.a, 'p123\nctrilium\n', 'trilium (PID 123)'),
+                (self.b, 'p456\ncmegasync\np789\ncindexer\n',
+                 'megasync (PID 456), indexer (PID 789)')):
+            with self.subTest(root=root):
+                self.put(root, 'document.db', 'unchanged')
+                self.put(self.a, 'pending.txt', 'must not sync')
+                with patch('toy_sync.engine.shutil.which', return_value='/usr/bin/lsof'), \
+                        patch('toy_sync.engine.subprocess.run', return_value=Mock(
+                            returncode=0, stdout=output, stderr='')) as check:
+                    with self.assertRaises(RuntimeError) as error:
+                        self.run_sync()
+                self.assertIn(str(root / 'document.db'), str(error.exception))
+                self.assertIn(holder, str(error.exception))
+                self.assertFalse((self.b / 'pending.txt').exists())
+                self.assertFalse((self.state / (self.p['id'] + '.json')).exists())
+                self.assertEqual(check.call_args.args[0][-2:], ['--', str(root / 'document.db')])
+                (root / 'document.db').unlink()
+
+    def test_closed_databases_sync(self):
+        self.put(self.a, 'document.db', 'closed database')
+        self.put(self.b, 'document.db', 'closed database')
+        with patch('toy_sync.engine.shutil.which', return_value='/usr/bin/lsof'), \
+                patch('toy_sync.engine.subprocess.run', return_value=Mock(
+                    returncode=1, stdout='', stderr='')) as check:
+            self.run_sync()
+        self.assertEqual(check.call_count, 2)
+        self.assertTrue((self.state / (self.p['id'] + '.json')).exists())
+
+    def test_failed_database_check_blocks_sync(self):
+        self.put(self.a, 'document.db', 'unchanged')
+        with patch('toy_sync.engine.shutil.which', return_value='/usr/bin/lsof'), \
+                patch('toy_sync.engine.subprocess.run', return_value=Mock(
+                    returncode=2, stdout='', stderr='check failed')):
+            with self.assertRaisesRegex(RuntimeError, 'Could not check.*check failed'):
+                self.run_sync()
+        self.assertFalse((self.b / 'document.db').exists())
 
     def test_links_rejected(self):
         (self.a / 'link').symlink_to(self.b, target_is_directory=True)

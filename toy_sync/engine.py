@@ -145,8 +145,24 @@ class Engine:
             if db.exists():
                 if not shutil.which('lsof'):
                     raise RuntimeError('Install lsof to check whether the Trilium database is open.')
-                if subprocess.run(['lsof', '-t', str(db)], capture_output=True).returncode == 0:
-                    raise RuntimeError('Trilium is using document.db. Close Trilium before syncing this pair.')
+                result = subprocess.run(['lsof', '-nP', '-F', 'pc', '--', str(db)],
+                                        capture_output=True, text=True)
+                if result.returncode == 0:
+                    holders = []
+                    pid = None
+                    for line in result.stdout.splitlines():
+                        if line.startswith('p'):
+                            pid = line[1:]
+                            holders.append(f'PID {pid}')
+                        elif line.startswith('c') and pid is not None:
+                            holders[-1] = f'{line[1:]} (PID {pid})'
+                    detail = ', '.join(holders) or 'an unidentified process'
+                    raise RuntimeError(f'Database is open: {db}; held by {detail}. '
+                                       'Sync skipped to protect the database. Close the application '
+                                       'or wait for it to release the file; automatic retry in one minute.')
+                if result.returncode != 1:
+                    raise RuntimeError(f'Could not check whether {db} is open: '
+                                       f'{result.stderr.strip() or "lsof failed"}. Sync skipped.')
         if p['mode'] == 'backup':
             return self.backup(p, a, b)
         sa, sb = scan(a), scan(b)

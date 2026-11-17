@@ -43,8 +43,8 @@ Sync Now runs all enabled pairs. Disable a pairing in its settings to pause it.
   snapshots require space for a complete new copy before old copies are pruned.
 
 Each pairing runs on folder changes or at a chosen interval in minutes. Folder
-watching uses Linux inotify through watchdog; events are grouped after 3 quiet
-seconds with a 30-second maximum wait. Interval timing starts when the app starts
+watching uses Linux inotify through watchdog; events are grouped after 15 quiet
+seconds with a 60-second maximum wait. Interval timing starts when the app starts
 and resets on completion; it is not a wall-clock schedule. A new pairing waits
 for a change, its interval, or Sync Now. Failed runs retry after a minute.
 Login launch and login sync are separate preferences; both must be checked for
@@ -65,8 +65,11 @@ An existing but empty root is a real deletion after the first baseline. Avoid
 using a mount point that remains as an empty directory when its disk is unplugged.
 Writable roots may not overlap other pairs, though a backup can read a synced root.
 Trilium pairs skip while `document.db` is open, preserving the old script's lsof
-safeguard. Close database applications before syncing their data. This is a file
-sync tool, not a transactional database backup utility.
+safeguard. The error identifies the database path and the process names and PIDs
+holding it open. This can include a cloud sync client briefly reading the destination
+after Trilium has closed; failed runs retry after a minute. Close database applications
+before syncing their data. This is a file sync tool, not a transactional database
+backup utility.
 
 Configuration is in `~/.config/toy-sync/settings.json`, state and activity are in
 `~/.local/share/toy-sync/`. Old Trilium service files and installed launchers are

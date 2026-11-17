@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QLockFile, QStandardPaths
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QLockFile, QStandardPaths, QDir
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -19,6 +19,8 @@ import json
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 AUTOSTART = Path(os.getenv('XDG_CONFIG_HOME', HOME / '.config')) / 'autostart/toy-sync.desktop'
+CHANGE_QUIET_SECONDS = 15
+CHANGE_MAX_WAIT_SECONDS = 60
 
 
 def icon(busy=False, angle=0, error=False):
@@ -112,9 +114,17 @@ class PairDialog(QDialog):
         self.update_fields()
 
     def browse(self, edit):
-        folder = QFileDialog.getExistingDirectory(self, 'Choose folder', edit.text() or str(HOME))
-        if folder:
-            edit.setText(folder)
+        chooser = QFileDialog(self, 'Choose folder', edit.text() or str(HOME),
+                              options=QFileDialog.DontUseNativeDialog | QFileDialog.ShowDirsOnly)
+        chooser.setFileMode(QFileDialog.Directory)
+        show_hidden = QCheckBox('Show hidden folders', chooser)
+        show_hidden.setChecked(bool(chooser.filter() & QDir.Hidden))
+        show_hidden.toggled.connect(lambda checked: chooser.setFilter(
+            chooser.filter() | QDir.Hidden if checked else chooser.filter() & ~QDir.Hidden))
+        layout = chooser.layout()
+        layout.addWidget(show_hidden, layout.rowCount(), 0, 1, layout.columnCount())
+        if chooser.exec() == QDialog.Accepted:
+            edit.setText(chooser.selectedFiles()[0])
 
     def update_fields(self):
         self.keep.setEnabled(self.mode.currentIndex() == 2)
@@ -254,7 +264,8 @@ class Window(QMainWindow):
         note = QLabel('Sync at login runs enabled pairs when Toy_Sync is launched by your desktop session.\n'
                       'Enable Launch at login to use it. Closing or minimizing this window keeps syncing\n'
                       'in the tray. Choose Quit in the tray menu to stop Toy_Sync.\n\n'
-                      'Folder changes are grouped after 3 quiet seconds, with a 30-second maximum wait.\n'
+                      f'Folder changes are grouped after {CHANGE_QUIET_SECONDS} quiet seconds, '
+                      f'with a {CHANGE_MAX_WAIT_SECONDS}-second maximum wait.\n'
                       'No desktop notifications are sent. The tray icon turns mint and rotates while syncing.')
         note.setWordWrap(True)
         sl.addWidget(note)
@@ -420,7 +431,9 @@ class Window(QMainWindow):
             if not p['enabled']:
                 continue
             pid = p['id']
-            changed = pid in self.pending and (now - self.pending[pid][1] >= 3 or now - self.pending[pid][0] >= 30)
+            changed = pid in self.pending and (
+                now - self.pending[pid][1] >= CHANGE_QUIET_SECONDS or
+                now - self.pending[pid][0] >= CHANGE_MAX_WAIT_SECONDS)
             interval = p['schedule'] == 'interval' and now - self.last_run.get(pid, now) >= p['minutes'] * 60
             retry = pid in self.failed and now - self.last_run.get(pid, now) >= 60
             if (changed or interval or retry) and pid != self.running_id:

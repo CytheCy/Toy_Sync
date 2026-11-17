@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 with tempfile.TemporaryDirectory() as folder:
@@ -22,7 +23,7 @@ with tempfile.TemporaryDirectory() as folder:
     app = QApplication([])
     w = Window(Namespace(login=False))
     w.show()
-    def until(condition, timeout=15):
+    def until(condition, timeout=30):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             app.processEvents()
@@ -31,6 +32,38 @@ with tempfile.TemporaryDirectory() as folder:
             time.sleep(.02)
         raise AssertionError('Timed out waiting for background sync')
     try:
+        # Check the delay without waiting, including new events and continuous activity.
+        pid = p['id']
+        with patch('toy_sync.app.time.monotonic') as clock, \
+                patch.object(w, 'enqueue') as enqueue, patch.object(w, 'start_next'):
+            clock.return_value = 100
+            w.mark_changed(pid)
+            clock.return_value = 114
+            w.tick()
+            enqueue.assert_not_called()
+            w.mark_changed(pid)
+            clock.return_value = 128
+            w.tick()
+            enqueue.assert_not_called()
+            clock.return_value = 129
+            w.tick()
+            enqueue.assert_called_once_with(pid)
+            enqueue.reset_mock()
+            clock.return_value = 200
+            w.mark_changed(pid)
+            clock.return_value = 259
+            w.mark_changed(pid)
+            w.tick()
+            enqueue.assert_not_called()
+            clock.return_value = 260
+            w.tick()
+            enqueue.assert_called_once_with(pid)
+            enqueue.reset_mock()
+            clock.return_value = 300
+            w.mark_changed(pid)
+            w.sync_all()
+            enqueue.assert_called_once_with(pid)
+        w.pending.clear()
         d = PairDialog(w, p)
         assert not d.keep.isEnabled()
         d.mode.setCurrentIndex(2)
